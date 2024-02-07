@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 from PIL import Image
 import numpy as np
 import cv2
-from datasets.data_io import get_transform, read_all_lines, pfm_imread
+from .data_io import get_transform, read_all_lines, pfm_imread
 import torchvision.transforms as transforms
 import torch
 import matplotlib.pyplot as plt
