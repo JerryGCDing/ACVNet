@@ -87,8 +87,8 @@ def calc_voxel_grid(filtered_cloud, grid_size, voxel_size):
     xyz_q = np.floor(np.array(filtered_cloud / voxel_size)).astype(int)
     # Empty voxel grid
     vox_grid = np.zeros(grid_size)
-    offsets = np.array([int(9 / voxel_size), int(3 / voxel_size), 0])
-    xyz_offset_q = np.clip(xyz_q + offsets, [0, 0, 0], np.array(grid_size) - 1)
+    offsets = np.array([8 / voxel_size, 3 / voxel_size, 0])
+    xyz_offset_q = np.clip(xyz_q + offsets, [0, 0, 0], np.array(grid_size) - 1).astype(int)
     # Setting all voxels containitn a points equal to 1
     vox_grid[xyz_offset_q[:, 0], xyz_offset_q[:, 1], xyz_offset_q[:, 2]] = 1
 
