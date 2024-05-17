@@ -10,7 +10,7 @@ import numpy as np
 import time
 
 from models import ACVNet
-from datasets import VoxelDSDatasetCalib
+from datasets import VoxelDSDatasetCalib, VoxelKITTIDataset
 
 logger = logging.getLogger(__name__)
 coloredlogs.install(level='INFO')
@@ -74,11 +74,16 @@ def eval_metric(voxel_ests, voxel_gt, metric_func, *args, depth_range=None):
     return out_dict
 
 
-test_dataset = VoxelDSDatasetCalib('/work/vig/Datasets/DrivingStereo',
-                                   './filenames/DS_test_gt_calib.txt',
-                                   False,
-                                   [-8, 10, -3, 3, 0, 30],
-                                   [3, 1.5, 0.75, 0.375])
+test_ds_dataset = VoxelDSDatasetCalib('/work/vig/Datasets/DrivingStereo',
+                                      './filenames/DS_test_gt_calib.txt',
+                                      False,
+                                      [-8, 10, -3, 3, 0, 30],
+                                      [3, 1.5, 0.75, 0.375])
+test_kitti_dataset = VoxelKITTIDataset('/work/vig/Datasets/KITTI_VoxelFlow',
+                                       './filenames/KITTI_vox_valid.txt',
+                                       False,
+                                       [-9, 9, -3, 3, 0, 30],
+                                       [3, 1.5, 0.75, 0.375])
 model = ACVNet(192, False, False)
 
 
@@ -98,6 +103,45 @@ def calc_voxel_grid(filtered_cloud, grid_size, voxel_size):
     return torch.from_numpy(vox_grid), cloud_np
 
 
+def eval_dataset(test_model, dataset, *, dataset_name):
+    iou_dict = MetricDict()
+    cd_dict = MetricDict()
+    infer_time = []
+    for batch_idx, sample in enumerate(tqdm(dataset)):
+        imgL = sample['left'][None, ...]
+        imgR = sample['right'][None, ...]
+        voxel_gt = sample['voxel_grid'][-1]
+
+        if torch.cuda.is_available():
+            imgL = imgL.cuda()
+            imgR = imgR.cuda()
+
+        start = time.time()
+        with torch.no_grad():
+            disp_est = test_model(imgL, imgR)[-1].squeeze().cpu().numpy()
+            assert len(disp_est.shape) == 2
+            disp_est[disp_est <= 0] -= 1.
+
+        depth_est = dataset.f_u * 0.54 / disp_est
+        cloud_est = dataset.calc_cloud(depth_est)
+        filtered_cloud_est = dataset.filter_cloud(cloud_est)
+        voxel_est, _ = calc_voxel_grid(filtered_cloud_est, (48, 16, 80), .375)
+        infer_time.append(time.time() - start)
+
+        iou_dict.append(eval_metric([voxel_est], [voxel_gt], calc_IoU, depth_range=[.5, 1.]))
+        cd_dict.append(eval_metric([voxel_est], [voxel_gt], eval_cd, [0.375], depth_range=[.5, 1.]))
+
+    iou_mean = iou_dict.mean()
+    cd_mean = cd_dict.mean()
+
+    logger.info(f'{dataset_name} Metrics:')
+    for k in iou_mean.keys():
+        msg = f'Depth - {k}: IoU = {str(iou_mean[k].tolist())}; CD = {str(cd_mean[k].tolist())}'
+        logger.info(msg)
+    avg_infer = np.mean(np.array(infer_time))
+    logger.info(f'Avg_infer = {avg_infer}; FPS = {1 / avg_infer}')
+
+
 def eval_model():
     if torch.cuda.is_available():
         model.cuda()
@@ -111,41 +155,8 @@ def eval_model():
     model.load_state_dict(new_state_dict, strict=True)
     model.eval()
 
-    iou_dict = MetricDict()
-    cd_dict = MetricDict()
-    infer_time = []
-    for batch_idx, sample in enumerate(tqdm(test_dataset)):
-        imgL = sample['left'][None, ...]
-        imgR = sample['right'][None, ...]
-        voxel_gt = sample['voxel_grid'][-1]
-
-        if torch.cuda.is_available():
-            imgL = imgL.cuda()
-            imgR = imgR.cuda()
-
-        start = time.time()
-        with torch.no_grad():
-            disp_est = model(imgL, imgR)[-1].squeeze().cpu().numpy()
-            assert len(disp_est.shape) == 2
-            disp_est[disp_est <= 0] -= 1.
-
-        depth_est = test_dataset.f_u * 0.54 / disp_est
-        cloud_est = test_dataset.calc_cloud(depth_est)
-        filtered_cloud_est = test_dataset.filter_cloud(cloud_est)
-        voxel_est, _ = calc_voxel_grid(filtered_cloud_est, (48, 16, 80), .375)
-        infer_time.append(time.time() - start)
-
-        iou_dict.append(eval_metric([voxel_est], [voxel_gt], calc_IoU, depth_range=[.5, 1.]))
-        cd_dict.append(eval_metric([voxel_est], [voxel_gt], eval_cd, [0.375], depth_range=[.5, 1.]))
-
-    iou_mean = iou_dict.mean()
-    cd_mean = cd_dict.mean()
-
-    for k in iou_mean.keys():
-        msg = f'Depth - {k}: IoU = {str(iou_mean[k].tolist())}; CD = {str(cd_mean[k].tolist())}'
-        logger.info(msg)
-    avg_infer = np.mean(np.array(infer_time))
-    logger.info(f'Avg_infer = {avg_infer}; FPS = {1 / avg_infer}')
+    eval_dataset(model, test_ds_dataset, dataset_name='DrivingStereo')
+    eval_dataset(model, test_kitti_dataset, dataset_name='KITTI')
 
 
 def eval_cd(pred, gt, scale):
@@ -185,7 +196,7 @@ def eval_ops():
     if torch.cuda.is_available():
         model.cuda()
 
-    sample = test_dataset[0]
+    sample = test_ds_dataset[0]
     imgL, imgR, voxel_gt = sample['left'][None, ...], sample['right'][None, ...], sample['voxel_grid']
     if torch.cuda.is_available():
         imgL = imgL.cuda()

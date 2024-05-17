@@ -1,0 +1,9 @@
+.vscode/
+.idea/
+outputs/
+temp.py
+*/__pycache__/
+*/ipynb_checkpoints/
+*/zed_dataset/
+*.pyc
+.DS_Store
